@@ -1,0 +1,299 @@
+AWSTemplateFormatVersion: '2010-09-09' 
+
+Description: 'CloudFormation Template with AWS WAF Classic' 
+
+  
+
+Parameters: 
+
+  KeyName: 
+
+    Type: String 
+
+    Description: 'Name of the key pair for EC2 instances' 
+
+  
+
+Resources: 
+
+  EC2Instance1: 
+
+    Type: 'AWS::EC2::Instance' 
+
+    Properties: 
+
+      InstanceType: 't4g.medium' 
+
+      KeyName: !Ref 'KeyName' 
+
+      ImageId: 'ami-0b6581fde9e6e7779' 
+
+      BlockDeviceMappings: 
+
+        - DeviceName: '/dev/sda1' 
+
+          Ebs: 
+
+            VolumeSize: 50 
+
+            VolumeType: 'gp2' 
+
+  
+
+  EC2Instance2: 
+
+    Type: 'AWS::EC2::Instance' 
+
+    Properties: 
+
+      InstanceType: 't4g.medium' 
+
+      KeyName: !Ref 'KeyName' 
+
+      ImageId: 'ami-0b6581fde9e6e7779' 
+
+      BlockDeviceMappings: 
+
+        - DeviceName: '/dev/sda1' 
+
+          Ebs: 
+
+            VolumeSize: 50 
+
+            VolumeType: 'gp2' 
+
+  
+
+  LoadBalancer: 
+
+    Type: 'AWS::ElasticLoadBalancingV2::LoadBalancer' 
+
+    Properties: 
+
+      Subnets: 
+
+        - subnet-0a10cb4823773d21d 
+
+        - subnet-0ee0f15a60155147d 
+
+      SecurityGroups: 
+
+        - sg-022a3e0691e72cd91 
+
+  
+
+  MyTargetGroup: 
+
+    Type: 'AWS::ElasticLoadBalancingV2::TargetGroup' 
+
+    Properties: 
+
+      HealthCheckPath: "/health" 
+
+      HealthCheckProtocol: "HTTP" 
+
+      HealthCheckIntervalSeconds: 30 
+
+      HealthCheckTimeoutSeconds: 10 
+
+      HealthyThresholdCount: 5 
+
+      UnhealthyThresholdCount: 2 
+
+      Port: 8080 
+
+      Protocol: "HTTP" 
+
+      VpcId: "vpc-09a236403060cb4b2" 
+
+      Targets: 
+
+        - Id: !Ref EC2Instance1 
+
+          Port: 80 
+
+        - Id: !Ref EC2Instance2 
+
+          Port: 80 
+
+  
+
+  Listener: 
+
+    Type: 'AWS::ElasticLoadBalancingV2::Listener' 
+
+    Properties: 
+
+      DefaultActions: 
+
+        - Type: 'forward' 
+
+          TargetGroupArn: !Ref 'MyTargetGroup' 
+
+      LoadBalancerArn: !Ref 'LoadBalancer' 
+
+      Port: 80 
+
+      Protocol: 'HTTP' 
+
+  
+
+  RDSSubnetGroup: 
+
+    Type: 'AWS::RDS::DBSubnetGroup' 
+
+    Properties: 
+
+      DBSubnetGroupDescription: 'Subnet group for RDS' 
+
+      SubnetIds: 
+
+        - 'subnet-0a10cb4823773d21d' 
+
+        - 'subnet-0ee0f15a60155147d' 
+
+  
+
+  RDSInstance: 
+
+    Type: 'AWS::RDS::DBInstance' 
+
+    Properties: 
+
+      Engine: 'mysql' 
+
+      DBInstanceIdentifier: 'MyDBInstance' 
+
+      MasterUsername: 'admin' 
+
+      MasterUserPassword: 'pass12345' 
+
+      AllocatedStorage: 20 
+
+      MultiAZ: false 
+
+      PubliclyAccessible: false 
+
+      DBInstanceClass: 'db.t3.medium' 
+
+      DBSubnetGroupName: !Ref 'RDSSubnetGroup' 
+
+  
+
+  RDSReadReplica: 
+
+    Type: 'AWS::RDS::DBInstance' 
+
+    Properties: 
+
+      Engine: 'mysql' 
+
+      SourceDBInstanceIdentifier: !Ref 'RDSInstance' 
+
+      DBInstanceIdentifier: 'MyReadReplica' 
+
+      DBInstanceClass: 'db.t3.medium' 
+
+  
+
+  AutoScalingGroup: 
+
+    Type: 'AWS::AutoScaling::AutoScalingGroup' 
+
+    Properties: 
+
+      DesiredCapacity: 1 
+
+      MaxSize: 1 
+
+      MinSize: 0 
+
+      VPCZoneIdentifier: 
+
+        - 'subnet-0a10cb4823773d21d' 
+
+        - 'subnet-0ee0f15a60155147d' 
+
+      LaunchTemplate: 
+
+        Version: '1' 
+
+        LaunchTemplateName: 'tsautolaunch' 
+
+  
+
+  CloudFrontDistribution: 
+
+    Type: 'AWS::CloudFront::Distribution' 
+
+    Properties: 
+
+      DistributionConfig: 
+
+        Origins: 
+
+          - Id: 'MyLoadBalancerOrigin' 
+
+            DomainName: !GetAtt 'LoadBalancer.DNSName' 
+
+            CustomOriginConfig: 
+
+              HTTPPort: 80 
+
+              HTTPSPort: 443 
+
+              OriginProtocolPolicy: 'https-only' 
+
+        DefaultCacheBehavior: 
+
+          TargetOriginId: 'MyLoadBalancerOrigin' 
+
+          ForwardedValues: 
+
+            QueryString: false 
+
+          ViewerProtocolPolicy: 'redirect-to-https' 
+
+        Enabled: true 
+
+        WebACLId: !Ref 'WebACL'   
+
+  
+
+  WebACL: 
+
+    Type: 'AWS::WAF::WebACL' 
+
+    Properties: 
+
+      Name: 'MyWebACL' 
+
+      DefaultAction: 
+
+        Type: 'ALLOW' 
+
+      MetricName: 'MyWebACLMetric' 
+
+      Rules: 
+
+        - Action: 
+
+            Type: 'ALLOW' 
+
+          Priority: 1 
+
+          RuleId: !Ref 'ManagedRule' 
+
+  
+
+  ManagedRule: 
+
+    Type: 'AWS::WAF::Rule' 
+
+    Properties: 
+
+      Name: 'AWSManagedRulesCommonRule' 
+
+      MetricName: 'AWSManagedRulesCommonRuleMetric' 
+
+      Predicates: [] 
