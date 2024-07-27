@@ -1,0 +1,307 @@
+AWSTemplateFormatVersion: '2010-09-09' 
+Description: > 
+  AWS CloudFormation Template for S3 Buckets, CloudFront Distributions, EC2 Instances,  
+ Route 53 Record Sets, EC2 Instance, and associated EBS Volumes 
+ 
+Parameters: 
+  EnableAutomatedSnapshots: 
+    Type: String 
+    AllowedValues: ['true', 'false'] 
+    Default: 'true' 
+    Description: Flag to enable/disable automated snapshots for EC2 instance 
+ 
+  FrontendBucketName: 
+    Type: String 
+    Description: Name for the frontend S3 bucket 
+ 
+  ArtifactsBucketName: 
+    Type: String 
+    Description: Name for the artifacts S3 bucket 
+ 
+  InstanceTagName: 
+    Type: String 
+    Default: YourInstanceTagName 
+    Description: The tag name to apply to the EC2 instance and associated EBS volumes. 
+ 
+Resources: 
+  MyIAMRole: 
+    Type: 'AWS::IAM::Role' 
+    Properties: 
+      AssumeRolePolicyDocument: 
+        Version: '2012-10-17' 
+        Statement: 
+          - Effect: Allow 
+            Principal: 
+              Service: ec2.amazonaws.com 
+            Action: 'sts:AssumeRole' 
+      Policies: 
+        - PolicyName: MyEC2RolePolicy 
+          PolicyDocument: 
+            Version: '2012-10-17' 
+            Statement: 
+              - Effect: Allow 
+                Action: 'ec2:*' 
+                Resource: '*' 
+ 
+  MyEC2InstanceProfile: 
+    Type: 'AWS::IAM::InstanceProfile' 
+    Properties: 
+      Roles: 
+        - "fussion_demo" 
+ 
+  MyEC2Instance: 
+    Type: 'AWS::EC2::Instance' 
+    Properties: 
+      InstanceType: 't4g.small' 
+      ImageId: 'ami-0*******7779' 
+      KeyName: 'ec2key*' 
+      SubnetId: 'subnet-0e502*****c9ad51' 
+      SecurityGroupIds: 
+        - 'sg-04774****6023d96e' 
+      IamInstanceProfile: !Ref MyEC2InstanceProfile 
+      Tags: 
+        - Key: CreatedBy 
+          Value: giveyourname 
+        - Key: Name 
+          Value: !Ref InstanceTagName 
+        - Key: EnableAutomatedSnapshots 
+          Value: !Ref EnableAutomatedSnapshots 
+ 
+  EC2Volume: 
+    Type: 'AWS::EC2::Volume' 
+    Properties: 
+      AvailabilityZone: !GetAtt MyEC2Instance.AvailabilityZone 
+      Size: 8 
+      Tags: 
+        - Key: Name 
+          Value: !Ref InstanceTagName 
+ 
+  EC2VolumeAttachment: 
+    Type: 'AWS::EC2::VolumeAttachment' 
+    Properties: 
+      InstanceId: !Ref MyEC2Instance 
+      VolumeId: !Ref EC2Volume 
+      Device: /dev/sdf 
+ 
+  MyElasticIP: 
+    Type: 'AWS::EC2::EIP' 
+    Properties: 
+      InstanceId: !Ref MyEC2Instance 
+ 
+  MyTargetGroup: 
+    Type: 'AWS::ElasticLoadBalancingV2::TargetGroup' 
+    Properties: 
+      HealthCheckPath: "/health" 
+      HealthCheckProtocol: "HTTP" 
+      HealthCheckIntervalSeconds: 30 
+      HealthCheckTimeoutSeconds: 10 
+      HealthyThresholdCount: 5 
+      UnhealthyThresholdCount: 2 
+      Port: 8080 
+      Protocol: "HTTP" 
+      VpcId: "vpc-035a***b2a**004bb" 
+      Targets: 
+        - Id: !Ref MyEC2Instance 
+      Tags: 
+        - Key: CreatedBy 
+          Value: giveyourname 
+ 
+  MyListenerRule: 
+    Type: 'AWS::ElasticLoadBalancingV2::ListenerRule' 
+    Properties: 
+      Actions: 
+        - Type: "forward" 
+          TargetGroupArn: !Ref MyTargetGroup 
+      Conditions: 
+        - Field: "host-header" 
+          HostHeaderConfig: 
+            Values: 
+              - "mn-data-api.test1.*****s.in" 
+      ListenerArn: "arn:aws:elasticloadbalancing:ap-south-1:58174**5630:listener/app/dearmeraneta/e5ea40294a91c9a9/a709c6a09b5bc26a" 
+      Priority: 39 
+ 
+  FrontendBucket: 
+    Type: AWS::S3::Bucket 
+    Properties: 
+      OwnershipControls: 
+        Rules: 
+          - ObjectOwnership: BucketOwnerPreferred 
+      BucketName: !Ref FrontendBucketName 
+      AccessControl: Private 
+      VersioningConfiguration: 
+        Status: Suspended 
+      PublicAccessBlockConfiguration: 
+        BlockPublicAcls: true 
+        BlockPublicPolicy: true 
+        IgnorePublicAcls: true 
+        RestrictPublicBuckets: true 
+      Tags: 
+        - Key: CreatedBy 
+          Value: putyourname 
+ 
+  ArtifactsBucket: 
+    Type: AWS::S3::Bucket 
+    Properties: 
+      OwnershipControls: 
+        Rules: 
+          - ObjectOwnership: BucketOwnerPreferred 
+      BucketName: !Ref ArtifactsBucketName 
+      AccessControl: Private 
+      VersioningConfiguration: 
+        Status: Suspended 
+      PublicAccessBlockConfiguration: 
+        BlockPublicAcls: true 
+        BlockPublicPolicy: true 
+        IgnorePublicAcls: true 
+        RestrictPublicBuckets: true 
+      Tags: 
+        - Key: CreatedBy 
+          Value: putyourname 
+ 
+  FrontendDistribution: 
+    Type: AWS::CloudFront::Distribution 
+    Properties: 
+      DistributionConfig: 
+        Origins: 
+          - Id: FrontendBucketOrigin 
+            DomainName: !GetAtt FrontendBucket.DomainName 
+            S3OriginConfig: 
+              OriginAccessIdentity: origin-access-identity/cloudfront/E1H86UNMLAVP6A 
+        DefaultCacheBehavior: 
+          TargetOriginId: FrontendBucketOrigin 
+          ViewerProtocolPolicy: redirect-to-https 
+          AllowedMethods: 
+            - GET 
+            - HEAD 
+            - OPTIONS 
+          ForwardedValues: 
+            QueryString: false 
+        DefaultRootObject: index.html 
+        Logging: 
+          Bucket: !GetAtt FrontendBucket.DomainName 
+          IncludeCookies: true 
+        Enabled: true 
+ 
+  ArtifactsDistribution: 
+    Type: AWS::CloudFront::Distribution 
+    Properties: 
+      DistributionConfig: 
+        Origins: 
+          - Id: ArtifactsBucketOrigin 
+            DomainName: !GetAtt ArtifactsBucket.DomainName 
+            S3OriginConfig: 
+              OriginAccessIdentity: origin-access-identity/cloudfront/E59T4MW6FF3R6 
+        DefaultCacheBehavior: 
+          TargetOriginId: ArtifactsBucketOrigin 
+          ViewerProtocolPolicy: redirect-to-https 
+          AllowedMethods: 
+            - GET 
+            - HEAD 
+            - OPTIONS 
+          ForwardedValues: 
+            QueryString: true 
+        Enabled: true 
+ 
+  ALBDistribution: 
+    Type: AWS::CloudFront::Distribution 
+    Properties: 
+      DistributionConfig: 
+        Origins: 
+          - Id: MyOrigin 
+            DomainName: dearmeraneta-72**83514.ap-south-1.elb.amazonaws.com 
+            CustomOriginConfig: 
+              HTTPPort: 80 
+              OriginProtocolPolicy: http-only 
+        DefaultCacheBehavior: 
+          TargetOriginId: MyOrigin 
+          ViewerProtocolPolicy: redirect-to-https 
+          AllowedMethods: 
+            - GET 
+            - HEAD 
+            - OPTIONS 
+            - PUT 
+            - POST 
+            - PATCH 
+            - DELETE 
+          ForwardedValues: 
+            QueryString: true 
+        Enabled: true 
+ 
+  OriginAccessIdentityforFrontend: 
+    Type: AWS::CloudFront::CloudFrontOriginAccessIdentity 
+    Properties: 
+      CloudFrontOriginAccessIdentityConfig: 
+        Comment: Identity for frontend S3 bucket 
+ 
+  OriginAccessIdentityforArtifacts: 
+    Type: AWS::CloudFront::CloudFrontOriginAccessIdentity 
+    Properties: 
+      CloudFrontOriginAccessIdentityConfig: 
+        Comment: Identity for artifacts S3 bucket 
+ 
+  myDNSRecordFrontend: 
+    Type: AWS::Route53::RecordSet 
+    Properties: 
+      HostedZoneId: Z0653697223**85Y96A 
+      Name: "frontend.w***tes.in" 
+      Type: CNAME 
+      TTL: "900" 
+      ResourceRecords: 
+        - !GetAtt FrontendDistribution.DomainName 
+ 
+  myDNSRecordArtifacts: 
+    Type: AWS::Route53::RecordSet 
+    Properties: 
+      HostedZoneId: Z06536****LTTI5Y96A 
+      Name: "artifacts.***tes.in" 
+      Type: CNAME 
+      TTL: "900" 
+      ResourceRecords: 
+        - !GetAtt ArtifactsDistribution.DomainName 
+ 
+  myDNSRecordALB: 
+    Type: AWS::Route53::RecordSet 
+    Properties: 
+      HostedZoneId: Z065369***3LTTI5Y96A 
+      Name: "alb.****es.in" 
+      Type: CNAME 
+      TTL: "900" 
+      ResourceRecords: 
+        - !GetAtt ALBDistribution.DomainName 
+ 
+  EC2VolumeLifecyclePolicy: 
+    Type: 'AWS::EC2::VolumeLifecyclePolicy' 
+    Properties: 
+      PolicyDetails: 
+        PolicyType: 'automated' 
+        ResourceId: !Ref EC2Volume 
+        Schedules: 
+          - Name: DailySnapshot 
+            TagsToAdd: 
+              - Key: CreatedBy 
+                Value: putyourname 
+              - Key: Name 
+                Value: !Ref InstanceTagName 
+            CreateRule: 
+              Interval: 1 
+              IntervalUnit: 'DAILY' 
+              Times: 
+                - '09:00' 
+ 
+Outputs: 
+  FrontendDistributionURL: 
+    Description: URL of the CloudFront distribution for the frontend bucket 
+    Value: !GetAtt FrontendDistribution.DomainName 
+ 
+  ArtifactsDistributionURL: 
+    Description: URL of the CloudFront distribution for the artifacts bucket 
+    Value: !GetAtt ArtifactsDistribution.DomainName 
+ 
+  ALBDistributionURL: 
+    Description: URL of the CloudFront distribution for the ALB 
+    Value: !GetAtt ALBDistribution.DomainName 
+   
+ InstanceId: 
+    Value: !Ref MyEC2Instance 
+  VolumeId: 
+    Value: !Ref EC2Volume 
